@@ -29,6 +29,25 @@ void offAllLeds(){
 	PTD->PSOR |= MASK(BLUE_LED);
 }
 
+void initPwm() {
+	SIM->SCGC6 |= SIM_SCGC6_TPM2_MASK;
+	
+	SIM->SOPT2 &= ~SIM_SOPT2_TPMSRC_MASK;
+	SIM->SOPT2 |= SIM_SOPT2_TPMSRC(1);
+	
+	TPM2->MOD = 7500;
+	
+	TPM2->SC &= ~((TPM_SC_CMOD_MASK) | (TPM_SC_PS_MASK));
+	TPM2->SC |= (TPM_SC_CMOD(1) | TPM_SC_PS(4));
+	TPM2->SC &= ~(TPM_SC_CPWMS_MASK);
+	
+	TPM2_C0SC &= ~((TPM_CnSC_ELSB_MASK) | (TPM_CnSC_ELSA_MASK));
+	TPM2_C0SC |= (TPM_CnSC_ELSB(1) | TPM_CnSC_MSB(1));
+	
+	TPM2_C1SC &= ~((TPM_CnSC_ELSB_MASK) | (TPM_CnSC_ELSA_MASK));
+	TPM2_C1SC |= (TPM_CnSC_ELSB(1) | TPM_CnSC_MSB(1));
+}
+
 void initUart(void) {
 	uint32_t divisor, bus_clock;
 	// Enable Clock to UART and port
@@ -102,23 +121,23 @@ void onLed(int8_t colour){
 
 
 void UART2_IRQHandler() {
-	// NVIC_ClearPendingIRQ(UART2_IRQn);
-	
-	// TEST BLOCK
-	// PTB->PCOR |= MASK(RED_LED);
-	// PTB->PCOR |= MASK(GREEN_LED);
-	// PTD->PCOR |= MASK(BLUE_LED);
-	// delay(200000);
-	// offAllLeds();
-	
 	if (UART2->S1 & UART_S1_RDRF_MASK) {
-		// PTB->PCOR |= MASK(RED_LED);
-		// PTB->PCOR |= MASK(GREEN_LED);
-		// PTD->PCOR |= MASK(BLUE_LED);
-		// delay(200000);
-		// offAllLeds();
-		// printf("%d", UART2->D);
 		rx_data = UART2->D;
+		if (rx_data > 64) {
+			TPM2_C0V = 7000;
+			TPM2_C1V = 7000;
+		}
+		else if (rx_data < -64) {
+			TPM2_C1V = 100;
+			TPM2_C0V = 100;
+		}
+		else {
+			TPM2_C1V = 3000;
+			TPM2_C0V = 3000;
+		}
+		
+		// TPM2_C0V = (rx_data + 128) * 7500 / 256;
+		// TPM2_C1V = (rx_data + 128) * 7500 / 256;
 	}
 }
 
@@ -128,11 +147,11 @@ void initGPIO(void) {
 	SIM->SCGC5 |= ((SIM_SCGC5_PORTB_MASK) | (SIM_SCGC5_PORTD_MASK));
 	// Configure MUX settings to make all 3 pins GPIO
 	PORTB->PCR[RED_LED] &= ~PORT_PCR_MUX_MASK;
-	PORTB->PCR[RED_LED] |= PORT_PCR_MUX(1);
+	PORTB->PCR[RED_LED] |= PORT_PCR_MUX(3);
 	PORTB->PCR[GREEN_LED] &= ~PORT_PCR_MUX_MASK;
-	PORTB->PCR[GREEN_LED] |= PORT_PCR_MUX(1);
+	PORTB->PCR[GREEN_LED] |= PORT_PCR_MUX(3);
 	PORTD->PCR[BLUE_LED] &= ~PORT_PCR_MUX_MASK;
-	PORTD->PCR[BLUE_LED] |= PORT_PCR_MUX(1);
+	PORTD->PCR[BLUE_LED] |= PORT_PCR_MUX(4);
 	// Set Data Direction Registers for PortB and PortD
 	PTB->PDDR |= (MASK(RED_LED) | MASK(GREEN_LED));
 	PTD->PDDR |= MASK(BLUE_LED);
@@ -145,13 +164,27 @@ int main(void)
 	initUart();
 	initGPIO();
 	offAllLeds();
+	SystemCoreClockUpdate();
+	initPwm();
+	
+	TPM2_C0V = 7000;
+	TPM2_C1V = 7000;
+	
+	int channel0 = 2000;
+	int channel1 = 2000;
 	
 	while(1)
 	{
-		onLed(rx_data);
-		delay(100000);
-		offAllLeds();
-		delay(100000);
+		/*
+		delay(2000);
+		if (channel0 >= 7499) channel0 = 0;
+		else channel0 += 1;
 		
+		if (channel1 >= 7499) channel1 = 0;
+		else channel1 += 1;
+		
+		TPM2_C0V = channel0;
+		TPM2_C1V = channel1;
+		*/
 	}
 }

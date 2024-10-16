@@ -9,12 +9,12 @@
 #define SW_POS 6 // PortD Pin 6
 #define MASK(x) (1 << (x))
 
-#define BAUD_RATE 115200
+#define BAUD_RATE 9600
 #define UART_TX_PORTE22 22
 #define UART_RX_PORTE23 23
 #define UART2_INT_PRIO 3
 
-volatile int8_t rx_data = 1;
+volatile char rx_data = 1;
 
 static void delay(volatile uint32_t nof){
 	while(nof!=0){
@@ -118,28 +118,33 @@ void onLed(int8_t colour){
 			break;
 	}
 }
+	
+void executePacket() {
+	int isMovement = rx_data & 0x80;
+	int isLeft = rx_data & 0x40;
+	int data = (int) ((int8_t)(rx_data << 2));
+	if (isMovement) {
+		if (isLeft) {
+		}
+		else {
+		}
+	}
+	else {
+	}
+}
 
 
 void UART2_IRQHandler() {
 	if (UART2->S1 & UART_S1_RDRF_MASK) {
 		rx_data = UART2->D;
-		if (rx_data > 64) {
-			TPM2_C0V = 7000;
-			TPM2_C1V = 7000;
-		}
-		else if (rx_data < -64) {
-			TPM2_C1V = 100;
-			TPM2_C0V = 100;
-		}
-		else {
-			TPM2_C1V = 3000;
-			TPM2_C0V = 3000;
-		}
+		int converted = (int) ((int8_t) rx_data);
 		
-		// TPM2_C0V = (rx_data + 128) * 7500 / 256;
-		// TPM2_C1V = (rx_data + 128) * 7500 / 256;
+		executePacket();
+		TPM2_C0V = (converted + 128) * 7500 / 256;
+		TPM2_C1V = (converted + 128) * 7500 / 256;
 	}
 }
+
 
 
 void initGPIO(void) {

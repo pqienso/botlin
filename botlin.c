@@ -14,7 +14,16 @@
 #define UART_RX_PORTE23 23
 #define UART2_INT_PRIO 3
 
+#define LEFT_MOTOR1_PIN 0 // Pin for left motor Positive TPM1_CH0
+#define LEFT_MOTOR2_PIN 1 // Pin for left motor Ground TPM1_CH1
+#define RIGHT_MOTOR1_PIN 2 // Pin for right motor Positive TPM2_CH0
+#define RIGHT_MOTOR2_PIN 3 // Pin for right motor Ground TPM2_CH1
+
+#define PWM_FREQUENCY 50  // 50 Hz
+
+
 volatile char rx_data = 1;
+volatile int leftMotorValue, rightMotorValue;
 
 static void delay(volatile uint32_t nof){
 	while(nof!=0){
@@ -29,23 +38,43 @@ void offAllLeds(){
 	PTD->PSOR |= MASK(BLUE_LED);
 }
 
-void initPwm() {
-	SIM->SCGC6 |= SIM_SCGC6_TPM2_MASK;
-	
-	SIM->SOPT2 &= ~SIM_SOPT2_TPMSRC_MASK;
-	SIM->SOPT2 |= SIM_SOPT2_TPMSRC(1);
-	
-	TPM2->MOD = 7500;
-	
-	TPM2->SC &= ~((TPM_SC_CMOD_MASK) | (TPM_SC_PS_MASK));
-	TPM2->SC |= (TPM_SC_CMOD(1) | TPM_SC_PS(4));
-	TPM2->SC &= ~(TPM_SC_CPWMS_MASK);
-	
-	TPM2_C0SC &= ~((TPM_CnSC_ELSB_MASK) | (TPM_CnSC_ELSA_MASK));
-	TPM2_C0SC |= (TPM_CnSC_ELSB(1) | TPM_CnSC_MSB(1));
-	
-	TPM2_C1SC &= ~((TPM_CnSC_ELSB_MASK) | (TPM_CnSC_ELSA_MASK));
-	TPM2_C1SC |= (TPM_CnSC_ELSB(1) | TPM_CnSC_MSB(1));
+
+void initPwm(void) {
+  
+  SIM_SCGC5 |= SIM_SCGC5_PORTB_MASK;
+  
+  PORTB->PCR[LEFT_MOTOR1_PIN] &= ~PORT_PCR_MUX_MASK;
+  PORTB->PCR[LEFT_MOTOR1_PIN] |= PORT_PCR_MUX(3);
+  
+  PORTB->PCR[LEFT_MOTOR2_PIN] &= ~PORT_PCR_MUX_MASK;
+  PORTB->PCR[LEFT_MOTOR2_PIN] |= PORT_PCR_MUX(3);
+  
+  PORTB->PCR[RIGHT_MOTOR1_PIN] &= ~PORT_PCR_MUX_MASK;
+  PORTB->PCR[RIGHT_MOTOR1_PIN] |= PORT_PCR_MUX(3);
+  
+  PORTB->PCR[RIGHT_MOTOR2_PIN] &= ~PORT_PCR_MUX_MASK;
+  PORTB->PCR[RIGHT_MOTOR2_PIN] |= PORT_PCR_MUX(3);
+  
+  SIM->SCGC6 |= SIM_SCGC6_TPM1_MASK | SIM_SCGC6_TPM2_MASK;
+  
+  SIM->SOPT2 &= ~SIM_SOPT2_TPMSRC_MASK;
+  SIM->SOPT2 |= SIM_SOPT2_TPMSRC(1);
+  
+  // Set MOD value for 50 Hz (assuming a 48 MHz clock)
+  TPM1->MOD = 48000000 / (128 * PWM_FREQUENCY) - 1;
+  TPM2->MOD = 48000000 / (128 * PWM_FREQUENCY) - 1;
+
+  // Set TPM1 and TPM2 to up-counting mode with divide by 128 prescaler
+  TPM1->SC = TPM_SC_CMOD(1) | TPM_SC_PS(7);
+  TPM2->SC = TPM_SC_CMOD(1) | TPM_SC_PS(7);
+
+  // Configure TPM1_CH0 and TPM1_CH1 for edge-aligned PWM, high-true pulses
+  TPM1_C0SC = TPM_CnSC_ELSB(1) | TPM_CnSC_MSB(1);
+  TPM1_C1SC = TPM_CnSC_ELSB(1) | TPM_CnSC_MSB(1);
+
+  // Configure TPM2_CH0 and TPM2_CH1 for edge-aligned PWM, high-true pulses
+  TPM2_C0SC = TPM_CnSC_ELSB(1) | TPM_CnSC_MSB(1);
+  TPM2_C1SC = TPM_CnSC_ELSB(1) | TPM_CnSC_MSB(1);
 }
 
 void initUart(void) {
@@ -81,52 +110,28 @@ void initUart(void) {
 	UART2->C2|= ((UART_C2_TE_MASK) | (UART_C2_RE_MASK) | (UART_C2_RIE_MASK));
 }
 
-
-void offLed(int8_t colour){
-	switch (colour){
-		case(1):
-			PTB->PSOR |= MASK(RED_LED);
-			break;
-		case(2):
-			PTB->PSOR |= MASK(GREEN_LED);
-			break;
-		case(3):
-			PTD->PSOR |= MASK(BLUE_LED);
-			break;
-		default:
-			offAllLeds();
-			break;
-	}
+// Function to set the duty cycle for a specific motor
+void setMotorLeftPWM(uint32_t channel, float dutyCycle) {
+    uint32_t mod = TPM1->MOD;
+    TPM1->CONTROLS[channel].CnV = mod * ((dutyCycle < 0) ? 0 : dutyCycle);
+    
 }
 
-void onLed(int8_t colour){
-	int8_t newColour = colour;
-	switch (newColour){
-		case(0):
-			PTB->PCOR |= MASK(RED_LED);
-			break;
-		case(1):
-			PTB->PCOR |= MASK(GREEN_LED);
-			break;
-		case(2):
-			PTD->PCOR |= MASK(BLUE_LED);
-			break;
-		default:
-			PTB->PCOR |= MASK(RED_LED);
-			PTB->PCOR |= MASK(GREEN_LED);
-			PTD->PCOR |= MASK(BLUE_LED);
-			break;
-	}
+void setMotorRightPWM(uint32_t channel, float dutyCycle) {
+    uint32_t mod = TPM2->MOD;
+    TPM2->CONTROLS[channel].CnV = mod * ((dutyCycle < 0) ? 0 : dutyCycle);
 }
 	
 void executePacket() {
 	int isMovement = rx_data & 0x80;
-	int isLeft = rx_data & 0x40;
-	int data = (int) ((int8_t)(rx_data << 2));
 	if (isMovement) {
+		int isLeft = rx_data & 0x40;
+		int8_t value = ((int8_t) (rx_data << 2)) / 4;
 		if (isLeft) {
+			leftMotorValue = ((int) value) + 1;
 		}
 		else {
+			rightMotorValue = ((int) value) + 1;
 		}
 	}
 	else {
@@ -137,59 +142,35 @@ void executePacket() {
 void UART2_IRQHandler() {
 	if (UART2->S1 & UART_S1_RDRF_MASK) {
 		rx_data = UART2->D;
-		int converted = (int) ((int8_t) rx_data);
-		
 		executePacket();
-		TPM2_C0V = (converted + 128) * 7500 / 256;
-		TPM2_C1V = (converted + 128) * 7500 / 256;
+		// TPM2_C0V = (leftMotorValue + 32) * 7500 / 64;
+		// TPM2_C1V = (rightMotorValue + 32) * 7500 / 64;
 	}
 }
 
-
-
-void initGPIO(void) {
-	// Enable Clock to PORTB and PORTD
-	SIM->SCGC5 |= ((SIM_SCGC5_PORTB_MASK) | (SIM_SCGC5_PORTD_MASK));
-	// Configure MUX settings to make all 3 pins GPIO
-	PORTB->PCR[RED_LED] &= ~PORT_PCR_MUX_MASK;
-	PORTB->PCR[RED_LED] |= PORT_PCR_MUX(3);
-	PORTB->PCR[GREEN_LED] &= ~PORT_PCR_MUX_MASK;
-	PORTB->PCR[GREEN_LED] |= PORT_PCR_MUX(3);
-	PORTD->PCR[BLUE_LED] &= ~PORT_PCR_MUX_MASK;
-	PORTD->PCR[BLUE_LED] |= PORT_PCR_MUX(4);
-	// Set Data Direction Registers for PortB and PortD
-	PTB->PDDR |= (MASK(RED_LED) | MASK(GREEN_LED));
-	PTD->PDDR |= MASK(BLUE_LED);
-	
-}
 
 
 int main(void)
 {
 	initUart();
-	initGPIO();
-	offAllLeds();
 	SystemCoreClockUpdate();
 	initPwm();
 	
-	TPM2_C0V = 7000;
-	TPM2_C1V = 7000;
-	
-	int channel0 = 2000;
-	int channel1 = 2000;
-	
-	while(1)
-	{
-		/*
-		delay(2000);
-		if (channel0 >= 7499) channel0 = 0;
-		else channel0 += 1;
-		
-		if (channel1 >= 7499) channel1 = 0;
-		else channel1 += 1;
-		
-		TPM2_C0V = channel0;
-		TPM2_C1V = channel1;
-		*/
+
+	while (1) {
+		  // Two PWM values to control the left and right motors
+			float leftDutyCycle = (float)leftMotorValue/(float)32; // duty cycle for left motors
+			float rightDutyCycle = (float)rightMotorValue/(float)32; // duty cycle for right motors
+				
+			// Set the PWM for left motors (both motors receive the same value)
+			setMotorLeftPWM(0, leftDutyCycle);  // Set left motor Positive
+			setMotorLeftPWM(1, -leftDutyCycle);  // Set left motor Ground
+
+			// Set the PWM for right motors (both motors receive the same value)
+			setMotorRightPWM(0, -rightDutyCycle); // Set right motor Positive
+			setMotorRightPWM(1, rightDutyCycle); // Set right motor Ground
+
 	}
+	
+	
 }

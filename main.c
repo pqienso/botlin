@@ -1,3 +1,11 @@
+/*----------------------------------------------------------------------------
+ * CMSIS-RTOS 'main' function template
+ *---------------------------------------------------------------------------*/
+ 
+#include "RTE_Components.h"
+#include  CMSIS_device_header
+#include "cmsis_os2.h"
+ 
 #include "MKL25Z4.h"
 #include <stdint.h>
 #include <stdio.h>
@@ -25,15 +33,9 @@
 volatile char rx_data = 1;
 volatile int leftMotorValue, rightMotorValue;
 
-osThreadId_t UARTThread, PWMThread;
-osMutexId_t motorMutex;
-
-static void delay(volatile uint32_t nof){
-  while(nof!=0){
-    __ASM("NOP");
-    nof--;
-  }
-}
+osThreadId_t uartThreadId, pwmThreadId;
+osMutexId_t pwmValueMutex;
+osEventFlagsId_t newPacketFlag;
 
 void offAllLeds(){
   PTB->PSOR |= MASK(RED_LED);
@@ -125,17 +127,19 @@ void setMotorRightPWM(uint32_t channel, float dutyCycle) {
     TPM2->CONTROLS[channel].CnV = mod * ((dutyCycle < 0) ? 0 : dutyCycle);
 }
   
-void executePacket() {
+void processPacket() {
   int isMovement = rx_data & 0x80;
   if (isMovement) {
     int isLeft = rx_data & 0x40;
     int8_t value = ((int8_t) (rx_data << 2)) / 4;
+		osMutexAcquire(pwmValueMutex, osWaitForever);
     if (isLeft) {
       leftMotorValue = ((int) value) + 1;
     }
     else {
       rightMotorValue = ((int) value) + 1;
     }
+		osMutexRelease(pwmValueMutex);
   }
   else {
   }
@@ -146,22 +150,20 @@ void executePacket() {
 void UART2_IRQHandler() {
   if (UART2->S1 & UART_S1_RDRF_MASK) {
     rx_data = UART2->D;
-    executePacket();
-    // TPM2_C0V = (leftMotorValue + 32) * 7500 / 64;
-    // TPM2_C1V = (rightMotorValue + 32) * 7500 / 64;
+    osEventFlagsSet(newPacketFlag, 0x0001);
   }
 }
 
-void UARTthread(void *argument){
+void uartThread(void *argument){
     for (;;){
-        os_delay(100);
+			osEventFlagsWait(newPacketFlag, 0x0001, osFlagsWaitAny, osWaitForever);
+      processPacket();
     }
 }
 
-void PWMThread(void *argument){
+void pwmThread(void *argument){
     for (;;){
-
-        osMutextAquire(motorMutex, osWaitForever);
+        osMutexAcquire(pwmValueMutex, osWaitForever);
         // Two PWM values to control the left and right motors
         float leftDutyCycle = (float)leftMotorValue/(float)32; // duty cycle for left motors
         float rightDutyCycle = (float)rightMotorValue/(float)32; // duty cycle for right motors
@@ -173,7 +175,7 @@ void PWMThread(void *argument){
         // Set the PWM for right motors (both motors receive the same value)
         setMotorRightPWM(0, -rightDutyCycle); // Set right motor Positive
         setMotorRightPWM(1, rightDutyCycle); // Set right motor Ground
-        osMutexRelease(motorMutex);
+        osMutexRelease(pwmValueMutex);
 
         osDelay(20);
     }
@@ -188,13 +190,15 @@ int main(void) {
 
     osKernelInitialize();
 
-    motorMutex = osMutexNew(NULL);
+    pwmValueMutex = osMutexNew(NULL);
+		newPacketFlag = osEventFlagsNew(NULL);
 
-    osThreadNew(UARTThread, NULL, NULL);
-    osThreadNew(PWMThread, NULL, NULL);
+    uartThreadId = osThreadNew(uartThread, NULL, NULL);
+    pwmThreadId = osThreadNew(pwmThread, NULL, NULL);
 
     osKernelStart();
 
     for (;;){}
 }
+
 

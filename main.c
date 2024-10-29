@@ -33,7 +33,7 @@
 volatile char rx_data = 1;
 volatile int leftMotorValue, rightMotorValue;
 
-osThreadId_t packetThreadId, rightPwmThreadId, leftPwmThreadId;
+osThreadId_t packetProcessingThreadId, rightPwmThreadId, leftPwmThreadId;
 osMutexId_t rightPwmValueMutex, leftPwmValueMutex;
 osEventFlagsId_t newPacketFlag, newPwmValueFlag;
 
@@ -127,27 +127,6 @@ void setMotorRightPWM(uint32_t channel, float dutyCycle) {
     TPM2->CONTROLS[channel].CnV = mod * ((dutyCycle < 0) ? 0 : dutyCycle);
 }
   
-void processPacket() {
-  int isMovement = rx_data & 0x80;
-  if (isMovement) {
-    int isLeft = rx_data & 0x40;
-    int8_t value = ((int8_t) (rx_data << 2)) / 4;
-    if (isLeft) {
-			osMutexAcquire(leftPwmValueMutex, osWaitForever);
-      leftMotorValue = ((int) value) + 1;
-			osEventFlagsSet(newPwmValueFlag, 0x0001);
-			osMutexRelease(leftPwmValueMutex);
-    }
-    else {
-			osMutexAcquire(rightPwmValueMutex, osWaitForever);
-      rightMotorValue = ((int) value) + 1;
-			osEventFlagsSet(newPwmValueFlag, 0x0002);
-			osMutexRelease(rightPwmValueMutex);
-    }
-  }
-  else {
-  }
-}
 
 void UART2_IRQHandler() {
   if (UART2->S1 & UART_S1_RDRF_MASK) {
@@ -156,10 +135,31 @@ void UART2_IRQHandler() {
   }
 }
 
-void packetThread(void *argument){
+void packetProcessingThread(void *argument){
     for (;;){
 			osEventFlagsWait(newPacketFlag, 0x0001, osFlagsWaitAny, osWaitForever);
-      processPacket();
+			
+			int isMovement = rx_data & 0x80;
+			
+			if (isMovement) {
+				int isLeft = rx_data & 0x40;
+				int8_t value = ((int8_t) (rx_data << 2)) / 4;
+				if (isLeft) {
+					osMutexAcquire(leftPwmValueMutex, osWaitForever);
+					leftMotorValue = ((int) value) + 1;
+					osEventFlagsSet(newPwmValueFlag, 0x0001);
+					osMutexRelease(leftPwmValueMutex);
+				}
+				else {
+					osMutexAcquire(rightPwmValueMutex, osWaitForever);
+					rightMotorValue = ((int) value) + 1;
+					osEventFlagsSet(newPwmValueFlag, 0x0002);
+					osMutexRelease(rightPwmValueMutex);
+				}
+			}
+			
+			else {
+			}
     }
 }
 
@@ -206,7 +206,7 @@ int main(void) {
 		newPacketFlag = osEventFlagsNew(NULL);
 		newPwmValueFlag = osEventFlagsNew(NULL);
 
-    packetThreadId = osThreadNew(packetThread, NULL, NULL);
+    packetProcessingThreadId = osThreadNew(packetProcessingThread, NULL, NULL);
     rightPwmThreadId = osThreadNew(rightPwmThread, NULL, NULL);
 		leftPwmThreadId = osThreadNew(leftPwmThread, NULL, NULL);
 

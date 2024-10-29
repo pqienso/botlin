@@ -33,9 +33,9 @@
 volatile char rx_data = 1;
 volatile int leftMotorValue, rightMotorValue;
 
-osThreadId_t uartThreadId, pwmThreadId;
-osMutexId_t pwmValueMutex;
-osEventFlagsId_t newPacketFlag;
+osThreadId_t packetThreadId, rightPwmThreadId, leftPwmThreadId;
+osMutexId_t rightPwmValueMutex, leftPwmValueMutex;
+osEventFlagsId_t newPacketFlag, newPwmValueFlag;
 
 void offAllLeds(){
   PTB->PSOR |= MASK(RED_LED);
@@ -132,20 +132,22 @@ void processPacket() {
   if (isMovement) {
     int isLeft = rx_data & 0x40;
     int8_t value = ((int8_t) (rx_data << 2)) / 4;
-		osMutexAcquire(pwmValueMutex, osWaitForever);
     if (isLeft) {
+			osMutexAcquire(leftPwmValueMutex, osWaitForever);
       leftMotorValue = ((int) value) + 1;
+			osEventFlagsSet(newPwmValueFlag, 0x0001);
+			osMutexRelease(leftPwmValueMutex);
     }
     else {
+			osMutexAcquire(rightPwmValueMutex, osWaitForever);
       rightMotorValue = ((int) value) + 1;
+			osEventFlagsSet(newPwmValueFlag, 0x0002);
+			osMutexRelease(rightPwmValueMutex);
     }
-		osMutexRelease(pwmValueMutex);
   }
   else {
   }
 }
-
-
 
 void UART2_IRQHandler() {
   if (UART2->S1 & UART_S1_RDRF_MASK) {
@@ -154,30 +156,38 @@ void UART2_IRQHandler() {
   }
 }
 
-void uartThread(void *argument){
+void packetThread(void *argument){
     for (;;){
 			osEventFlagsWait(newPacketFlag, 0x0001, osFlagsWaitAny, osWaitForever);
       processPacket();
     }
 }
 
-void pwmThread(void *argument){
+void rightPwmThread(void *argument){
     for (;;){
-        osMutexAcquire(pwmValueMutex, osWaitForever);
-        // Two PWM values to control the left and right motors
-        float leftDutyCycle = (float)leftMotorValue/(float)32; // duty cycle for left motors
+				osEventFlagsWait(newPwmValueFlag, 0x0002, osFlagsWaitAny, osWaitForever);
+			
+        osMutexAcquire(rightPwmValueMutex, osWaitForever);
         float rightDutyCycle = (float)rightMotorValue/(float)32; // duty cycle for right motors
-            
-        // Set the PWM for left motors (both motors receive the same value)
-        setMotorLeftPWM(0, leftDutyCycle);  // Set left motor Positive
-        setMotorLeftPWM(1, -leftDutyCycle);  // Set left motor Ground
-
+				osMutexRelease(rightPwmValueMutex);
+			
         // Set the PWM for right motors (both motors receive the same value)
         setMotorRightPWM(0, -rightDutyCycle); // Set right motor Positive
         setMotorRightPWM(1, rightDutyCycle); // Set right motor Ground
-        osMutexRelease(pwmValueMutex);
+    }
+}
 
-        osDelay(20);
+void leftPwmThread(void *argument){
+    for (;;){
+				osEventFlagsWait(newPwmValueFlag, 0x0001, osFlagsWaitAny, osWaitForever);
+			
+        osMutexAcquire(leftPwmValueMutex, osWaitForever);
+        float leftDutyCycle = (float)leftMotorValue/(float)32; // duty cycle for left motors
+        osMutexRelease(leftPwmValueMutex);
+				
+        // Set the PWM for left motors (both motors receive the same value)
+        setMotorLeftPWM(0, leftDutyCycle);  // Set left motor Positive
+        setMotorLeftPWM(1, -leftDutyCycle);  // Set left motor Ground
     }
 }
 
@@ -190,11 +200,15 @@ int main(void) {
 
     osKernelInitialize();
 
-    pwmValueMutex = osMutexNew(NULL);
+    leftPwmValueMutex = osMutexNew(NULL);
+		rightPwmValueMutex = osMutexNew(NULL);
+	
 		newPacketFlag = osEventFlagsNew(NULL);
+		newPwmValueFlag = osEventFlagsNew(NULL);
 
-    uartThreadId = osThreadNew(uartThread, NULL, NULL);
-    pwmThreadId = osThreadNew(pwmThread, NULL, NULL);
+    packetThreadId = osThreadNew(packetThread, NULL, NULL);
+    rightPwmThreadId = osThreadNew(rightPwmThread, NULL, NULL);
+		leftPwmThreadId = osThreadNew(leftPwmThread, NULL, NULL);
 
     osKernelStart();
 

@@ -18,7 +18,7 @@
 #define SW_POS 6 // PortD Pin 6
 #define MASK(x) (1 << (x))
 
-#define BAUD_RATE 9600
+#define BAUD_RATE 38400
 #define UART_TX_PORTE22 22
 #define UART_RX_PORTE23 23
 #define UART2_INT_PRIO 3

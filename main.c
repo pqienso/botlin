@@ -10,13 +10,8 @@
 #include <stdint.h>
 #include <stdio.h>
 
-//this is just blinky code
-
-#define RED_LED 18 // PortB Pin 18
-#define GREEN_LED 19 // PortB Pin 19
-#define BLUE_LED 1 // PortD Pin 1
-#define SW_POS 6 // PortD Pin 6
-#define MASK(x) (1 << (x))
+#define NUM_LEDS 10  // Define the number of LEDs
+#define RED_LED_PIN 22
 
 #define BAUD_RATE 38400
 #define UART_TX_PORTE22 22
@@ -28,26 +23,47 @@
 #define RIGHT_MOTOR1_PIN 2 // Pin for right motor Positive TPM2_CH0
 #define RIGHT_MOTOR2_PIN 3 // Pin for right motor Ground TPM2_CH1
 
+#define BUZZER_PIN 2
+
 #define PWM_FREQUENCY 50  // 50 Hz
 
 volatile char rx_data = 1;
 volatile int leftMotorValue, rightMotorValue;
 
-osThreadId_t packetProcessingThreadId, rightPwmThreadId, leftPwmThreadId;
+// Define the GPIO ports and pins for the LEDs
+uint32_t led_ports[NUM_LEDS] = {PORTB_BASE, PORTB_BASE, PORTB_BASE, PORTB_BASE, PORTE_BASE, PORTE_BASE, PORTE_BASE, PORTE_BASE, PORTE_BASE, PORTE_BASE};
+uint32_t led_pins[NUM_LEDS] = {8, 9, 10, 11, 2, 3, 4, 5, 1, 0};
+
+uint32_t red_led_port = PORTE_BASE;
+
+osThreadId_t packetProcessingThreadId, rightPwmThreadId, leftPwmThreadId, ledControlThreadId;
 osMutexId_t rightPwmValueMutex, leftPwmValueMutex;
 osEventFlagsId_t newPacketFlag, newPwmValueFlag;
 
-void offAllLeds(){
-  PTB->PSOR |= MASK(RED_LED);
-  PTB->PSOR |= MASK(GREEN_LED);
-  PTD->PSOR |= MASK(BLUE_LED);
+
+void initGpio(void) {
+    // Enable clocks for PORTB and PORTC
+    SIM->SCGC5 |= SIM_SCGC5_PORTB_MASK | SIM_SCGC5_PORTE_MASK;
+
+    for (int i = 0; i < NUM_LEDS; i++) {
+        // Configure the pin as GPIO
+        if (led_ports[i] == PORTB_BASE) {
+            PORTB->PCR[led_pins[i]] = PORT_PCR_MUX(1);
+            PTB->PDDR |= (1 << led_pins[i]);
+        } else if (led_ports[i] == PORTE_BASE) {
+            PORTE->PCR[led_pins[i]] = PORT_PCR_MUX(1);
+            PTE->PDDR |= (1 << led_pins[i]);
+        }
+    }
+    PORTE->PCR[22] = PORT_PCR_MUX(1);
+    PTE->PDDR |= (1 << 22);
 }
 
 
 void initPwm(void) {
   
-  SIM_SCGC5 |= SIM_SCGC5_PORTB_MASK;
-  
+  SIM_SCGC5 |= SIM_SCGC5_PORTB_MASK | SIM_SCGC5_PORTC_MASK;
+
   PORTB->PCR[LEFT_MOTOR1_PIN] &= ~PORT_PCR_MUX_MASK;
   PORTB->PCR[LEFT_MOTOR1_PIN] |= PORT_PCR_MUX(3);
   
@@ -59,8 +75,11 @@ void initPwm(void) {
   
   PORTB->PCR[RIGHT_MOTOR2_PIN] &= ~PORT_PCR_MUX_MASK;
   PORTB->PCR[RIGHT_MOTOR2_PIN] |= PORT_PCR_MUX(3);
+
+  PORTC->PCR[BUZZER_PIN] &= ~PORT_PCR_MUX_MASK;
+  PORTC->PCR[BUZZER_PIN] |= PORT_PCR_MUX(4);
   
-  SIM->SCGC6 |= SIM_SCGC6_TPM1_MASK | SIM_SCGC6_TPM2_MASK;
+  SIM->SCGC6 |= SIM_SCGC6_TPM1_MASK | SIM_SCGC6_TPM2_MASK | SIM_SCGC6_TPM0_MASK;
   
   SIM->SOPT2 &= ~SIM_SOPT2_TPMSRC_MASK;
   SIM->SOPT2 |= SIM_SOPT2_TPMSRC(1);
@@ -80,7 +99,18 @@ void initPwm(void) {
   // Configure TPM2_CH0 and TPM2_CH1 for edge-aligned PWM, high-true pulses
   TPM2_C0SC = TPM_CnSC_ELSB(1) | TPM_CnSC_MSB(1);
   TPM2_C1SC = TPM_CnSC_ELSB(1) | TPM_CnSC_MSB(1);
+
+	//Buzzer
+
+	TPM0->SC &= ~((TPM_SC_CMOD_MASK) | (TPM_SC_PS_MASK));
+  TPM0->SC = TPM_SC_CMOD(1) | TPM_SC_PS(7);
+	TPM0->SC &= ~(TPM_SC_CPWMS_MASK);
+	
+  TPM0_C1SC = TPM_CnSC_ELSB(1) | TPM_CnSC_MSB(1);
+	
+
 }
+
 
 void initUart(void) {
   uint32_t divisor, bus_clock;
@@ -191,12 +221,92 @@ void leftPwmThread(void *argument){
     }
 }
 
+void setRedLed(int turnOn) {
+    if (turnOn) {
+        FPTE->PSOR = (1 << RED_LED_PIN);
+    } else {
+        FPTE->PCOR = (1 << RED_LED_PIN);
+    }
+}
+
+void turnOffAllGreenLeds() {
+    for (int i = 0; i < NUM_LEDS; i++) {
+        if (led_ports[i] == PORTB_BASE) {
+            FPTB->PCOR = (1 << led_pins[i]);  
+        } else if (led_ports[i] == PORTE_BASE) {
+            FPTE->PCOR = (1 << led_pins[i]);
+        }
+    }
+}
+
+void turnOnGreenLed(int index) {
+    if (led_ports[index] == PORTB_BASE) {
+        FPTB->PSOR = (1 << led_pins[index]);
+    } else if (led_ports[index] == PORTE_BASE) {
+        FPTE->PSOR = (1 << led_pins[index]);
+    }
+}
+
+// Function to turn on all LEDs
+void turnOnAllGreenLeds(void) {
+    for (int i = 0; i < NUM_LEDS; i++) {
+        turnOnGreenLed(i);
+    }
+}
+
+void greenLedWalk(void) {
+    for (int i = 0; i < NUM_LEDS; i++) {
+        turnOnGreenLed(i);
+        osDelay(50);
+        turnOffAllGreenLeds();
+    }
+}
+
+
+void ledControlThread(void *arg) {
+    while (1) {
+        // Wait for the flag to be set, or proceed based on timeout
+        int isMoving = leftMotorValue != 0 && rightMotorValue != 0;
+
+        // Determine the delay based on the flag state
+        if (isMoving){
+          setRedLed(1);
+          greenLedWalk();
+          setRedLed(0);
+          greenLedWalk();
+        } else {
+          turnOnAllGreenLeds();
+          setRedLed(1);
+          osDelay(250);
+          setRedLed(0);
+          osDelay(250);
+        }
+    }
+}
+
+void playNote(uint16_t frequency, uint32_t duration) {
+				TPM0->MOD = (48000000 / (128 * frequency)) - 1;
+				TPM0_C1V = TPM0->MOD / 4 * 3;  // 50% duty cycle
+        osDelay(duration);  // Delay for 500 ms to play the note
+}
+
+
+void buzzerControlThread(void *arg) {
+    for (;;) {
+        playNote(2000, 600);
+				playNote(3000, 200);
+				playNote(4000, 400);
+				playNote(3000, 400);
+    }
+}
+
 
 int main(void) {
 
     initUart();
     SystemCoreClockUpdate();
     initPwm();
+		initGpio();
 
     osKernelInitialize();
 
@@ -209,8 +319,12 @@ int main(void) {
     packetProcessingThreadId = osThreadNew(packetProcessingThread, NULL, NULL);
     rightPwmThreadId = osThreadNew(rightPwmThread, NULL, NULL);
 		leftPwmThreadId = osThreadNew(leftPwmThread, NULL, NULL);
+		ledControlThreadId = osThreadNew(ledControlThread, NULL, NULL);
+	
+		osThreadNew(buzzerControlThread, NULL, NULL);
 
     osKernelStart();
+		
 
     for (;;){}
 }

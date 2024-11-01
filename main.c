@@ -10,9 +10,6 @@
 #include <stdint.h>
 #include <stdio.h>
 
-#define NUM_LEDS 10  // Define the number of LEDs
-#define RED_LED_PIN 22
-
 #define BAUD_RATE 38400
 #define UART_TX_PORTE22 22
 #define UART_RX_PORTE23 23
@@ -23,20 +20,25 @@
 #define RIGHT_MOTOR1_PIN 2 // Pin for right motor Positive TPM2_CH0
 #define RIGHT_MOTOR2_PIN 3 // Pin for right motor Ground TPM2_CH1
 
-#define BUZZER_PIN 2
-
 #define PWM_FREQUENCY 50  // 50 Hz
 
-volatile char rx_data = 1;
-volatile int leftMotorValue, rightMotorValue;
+#define NUM_LEDS 10
+#define RED_LED_PIN 22
+
+#define BUZZER_PIN 2
+
+volatile char uartData = 1;
+volatile int leftMotorValue, rightMotorValue, isMovingTune = 1;
 
 // Define the GPIO ports and pins for the LEDs
-uint32_t led_ports[NUM_LEDS] = {PORTB_BASE, PORTB_BASE, PORTB_BASE, PORTB_BASE, PORTE_BASE, PORTE_BASE, PORTE_BASE, PORTE_BASE, PORTE_BASE, PORTE_BASE};
-uint32_t led_pins[NUM_LEDS] = {8, 9, 10, 11, 2, 3, 4, 5, 1, 0};
+uint32_t ledPorts[NUM_LEDS] = {
+	PORTB_BASE, PORTB_BASE, PORTB_BASE, PORTB_BASE, PORTE_BASE,
+	PORTE_BASE, PORTE_BASE, PORTE_BASE, PORTE_BASE, PORTE_BASE
+};
+uint32_t ledPins[NUM_LEDS] = {8, 9, 10, 11, 2, 3, 4, 5, 1, 0};
 
-uint32_t red_led_port = PORTE_BASE;
-
-osThreadId_t packetProcessingThreadId, rightPwmThreadId, leftPwmThreadId, ledControlThreadId;
+osThreadId_t packetProcessingThreadId, rightPwmThreadId, leftPwmThreadId,
+		ledControlThreadId, buzzerControlThreadId;
 osMutexId_t rightPwmValueMutex, leftPwmValueMutex;
 osEventFlagsId_t newPacketFlag, newPwmValueFlag;
 
@@ -47,12 +49,12 @@ void initGpio(void) {
 
     for (int i = 0; i < NUM_LEDS; i++) {
         // Configure the pin as GPIO
-        if (led_ports[i] == PORTB_BASE) {
-            PORTB->PCR[led_pins[i]] = PORT_PCR_MUX(1);
-            PTB->PDDR |= (1 << led_pins[i]);
-        } else if (led_ports[i] == PORTE_BASE) {
-            PORTE->PCR[led_pins[i]] = PORT_PCR_MUX(1);
-            PTE->PDDR |= (1 << led_pins[i]);
+        if (ledPorts[i] == PORTB_BASE) {
+            PORTB->PCR[ledPins[i]] = PORT_PCR_MUX(1);
+            PTB->PDDR |= (1 << ledPins[i]);
+        } else if (ledPorts[i] == PORTE_BASE) {
+            PORTE->PCR[ledPins[i]] = PORT_PCR_MUX(1);
+            PTE->PDDR |= (1 << ledPins[i]);
         }
     }
     PORTE->PCR[22] = PORT_PCR_MUX(1);
@@ -107,8 +109,6 @@ void initPwm(void) {
 	TPM0->SC &= ~(TPM_SC_CPWMS_MASK);
 	
   TPM0_C1SC = TPM_CnSC_ELSB(1) | TPM_CnSC_MSB(1);
-	
-
 }
 
 
@@ -142,14 +142,13 @@ void initUart(void) {
   NVIC_ClearPendingIRQ(UART2_IRQn);
   NVIC_EnableIRQ(UART2_IRQn);
   
-  UART2->C2|= ((UART_C2_TE_MASK) | (UART_C2_RE_MASK) | (UART_C2_RIE_MASK));
+  UART2->C2 |= ((UART_C2_TE_MASK) | (UART_C2_RE_MASK) | (UART_C2_RIE_MASK));
 }
 
 // Function to set the duty cycle for a specific motor
 void setMotorLeftPWM(uint32_t channel, float dutyCycle) {
     uint32_t mod = TPM1->MOD;
     TPM1->CONTROLS[channel].CnV = mod * ((dutyCycle < 0) ? 0 : dutyCycle);
-    
 }
 
 void setMotorRightPWM(uint32_t channel, float dutyCycle) {
@@ -160,7 +159,7 @@ void setMotorRightPWM(uint32_t channel, float dutyCycle) {
 
 void UART2_IRQHandler() {
   if (UART2->S1 & UART_S1_RDRF_MASK) {
-    rx_data = UART2->D;
+    uartData = UART2->D;
     osEventFlagsSet(newPacketFlag, 0x0001);
   }
 }
@@ -169,11 +168,11 @@ void packetProcessingThread(void *argument){
     for (;;){
 			osEventFlagsWait(newPacketFlag, 0x0001, osFlagsWaitAny, osWaitForever);
 			
-			int isMovement = rx_data & 0x80;
+			int isMovement = uartData & 0x80;
 			
 			if (isMovement) {
-				int isLeft = rx_data & 0x40;
-				int8_t value = ((int8_t) (rx_data << 2)) / 4;
+				int isLeft = uartData & 0x40;
+				int8_t value = ((int8_t) (uartData << 2)) / 4;
 				if (isLeft) {
 					osMutexAcquire(leftPwmValueMutex, osWaitForever);
 					leftMotorValue = ((int) value) + 1;
@@ -189,6 +188,7 @@ void packetProcessingThread(void *argument){
 			}
 			
 			else {
+				isMovingTune = uartData & 1;
 			}
     }
 }
@@ -223,31 +223,30 @@ void leftPwmThread(void *argument){
 
 void setRedLed(int turnOn) {
     if (turnOn) {
-        FPTE->PSOR = (1 << RED_LED_PIN);
+        PTE->PSOR = (1 << RED_LED_PIN);
     } else {
-        FPTE->PCOR = (1 << RED_LED_PIN);
+        PTE->PCOR = (1 << RED_LED_PIN);
     }
 }
 
 void turnOffAllGreenLeds() {
     for (int i = 0; i < NUM_LEDS; i++) {
-        if (led_ports[i] == PORTB_BASE) {
-            FPTB->PCOR = (1 << led_pins[i]);  
-        } else if (led_ports[i] == PORTE_BASE) {
-            FPTE->PCOR = (1 << led_pins[i]);
+        if (ledPorts[i] == PORTB_BASE) {
+            PTB->PCOR = (1 << ledPins[i]);  
+        } else if (ledPorts[i] == PORTE_BASE) {
+            PTE->PCOR = (1 << ledPins[i]);
         }
     }
 }
 
 void turnOnGreenLed(int index) {
-    if (led_ports[index] == PORTB_BASE) {
-        FPTB->PSOR = (1 << led_pins[index]);
-    } else if (led_ports[index] == PORTE_BASE) {
-        FPTE->PSOR = (1 << led_pins[index]);
+    if (ledPorts[index] == PORTB_BASE) {
+        PTB->PSOR = (1 << ledPins[index]);
+    } else if (ledPorts[index] == PORTE_BASE) {
+        PTE->PSOR = (1 << ledPins[index]);
     }
 }
 
-// Function to turn on all LEDs
 void turnOnAllGreenLeds(void) {
     for (int i = 0; i < NUM_LEDS; i++) {
         turnOnGreenLed(i);
@@ -262,19 +261,17 @@ void greenLedWalk(void) {
     }
 }
 
-
 void ledControlThread(void *arg) {
     while (1) {
-        // Wait for the flag to be set, or proceed based on timeout
         int isMoving = leftMotorValue != 0 && rightMotorValue != 0;
-
-        // Determine the delay based on the flag state
+			
         if (isMoving){
           setRedLed(1);
           greenLedWalk();
           setRedLed(0);
           greenLedWalk();
-        } else {
+        }
+				else {
           turnOnAllGreenLeds();
           setRedLed(1);
           osDelay(250);
@@ -285,18 +282,45 @@ void ledControlThread(void *arg) {
 }
 
 void playNote(uint16_t frequency, uint32_t duration) {
-				TPM0->MOD = (48000000 / (128 * frequency)) - 1;
-				TPM0_C1V = TPM0->MOD / 4 * 3;  // 50% duty cycle
-        osDelay(duration);  // Delay for 500 ms to play the note
+				if (frequency == 0) {
+					TPM0_C1V = 0;
+				}
+				else{	
+					TPM0->MOD = (48000000 / (128 * frequency)) - 1;
+					TPM0_C1V = TPM0->MOD / 4 * 3;  // 75% duty cycle
+				}
+        osDelay(duration);
 }
 
 
 void buzzerControlThread(void *arg) {
+		uint16_t movingNotes[] = {
+				466, 0, 466, 0, 466, 494, 622
+		};
+		uint32_t movingRhythm[] = {
+				400, 400, 400, 400, 600, 600, 400
+		};
+		
+		uint16_t finishNotes[] = {
+				659, 587, 370, 415, 554, 494, 294,
+				330, 494, 440, 277, 330, 440
+		};
+		uint32_t finishRhythm[] = {
+				300, 300, 600, 600, 300, 300, 600, 600,
+				300, 300, 600, 600, 1200
+		};
+	
     for (;;) {
-        playNote(2000, 600);
-				playNote(3000, 200);
-				playNote(4000, 400);
-				playNote(3000, 400);
+        if(isMovingTune) {
+					for (int i = 0; i < 7; i++) {
+						playNote(movingNotes[i], movingRhythm[i]);
+					}
+				}
+				else {
+					for (int i = 0; i < 13; i++) {
+						playNote(finishNotes[i], finishRhythm[i]);
+					}
+			  }
     }
 }
 
@@ -320,8 +344,7 @@ int main(void) {
     rightPwmThreadId = osThreadNew(rightPwmThread, NULL, NULL);
 		leftPwmThreadId = osThreadNew(leftPwmThread, NULL, NULL);
 		ledControlThreadId = osThreadNew(ledControlThread, NULL, NULL);
-	
-		osThreadNew(buzzerControlThread, NULL, NULL);
+		buzzerControlThreadId = osThreadNew(buzzerControlThread, NULL, NULL);
 
     osKernelStart();
 		

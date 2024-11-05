@@ -32,13 +32,13 @@ volatile int leftMotorValue, rightMotorValue, isMovingTune = 1;
 
 // Define the GPIO ports and pins for the LEDs
 uint32_t ledPorts[NUM_LEDS] = {
-	PORTB_BASE, PORTB_BASE, PORTB_BASE, PORTB_BASE, PORTE_BASE,
-	PORTE_BASE, PORTE_BASE, PORTE_BASE, PORTE_BASE, PORTE_BASE
+  PORTB_BASE, PORTB_BASE, PORTB_BASE, PORTB_BASE, PORTE_BASE,
+  PORTE_BASE, PORTE_BASE, PORTE_BASE, PORTE_BASE, PORTE_BASE
 };
 uint32_t ledPins[NUM_LEDS] = {8, 9, 10, 11, 2, 3, 4, 5, 1, 0};
 
 osThreadId_t packetProcessingThreadId, rightPwmThreadId, leftPwmThreadId,
-		ledControlThreadId, buzzerControlThreadId;
+    ledControlThreadId, buzzerControlThreadId;
 osMutexId_t rightPwmValueMutex, leftPwmValueMutex;
 osEventFlagsId_t newPacketFlag, newPwmValueFlag;
 
@@ -63,7 +63,6 @@ void initGpio(void) {
 
 
 void initPwm(void) {
-  
   SIM_SCGC5 |= SIM_SCGC5_PORTB_MASK | SIM_SCGC5_PORTC_MASK;
 
   PORTB->PCR[LEFT_MOTOR1_PIN] &= ~PORT_PCR_MUX_MASK;
@@ -102,12 +101,12 @@ void initPwm(void) {
   TPM2_C0SC = TPM_CnSC_ELSB(1) | TPM_CnSC_MSB(1);
   TPM2_C1SC = TPM_CnSC_ELSB(1) | TPM_CnSC_MSB(1);
 
-	//Buzzer
+  //Buzzer
 
-	TPM0->SC &= ~((TPM_SC_CMOD_MASK) | (TPM_SC_PS_MASK));
+  TPM0->SC &= ~((TPM_SC_CMOD_MASK) | (TPM_SC_PS_MASK));
   TPM0->SC = TPM_SC_CMOD(1) | TPM_SC_PS(7);
-	TPM0->SC &= ~(TPM_SC_CPWMS_MASK);
-	
+  TPM0->SC &= ~(TPM_SC_CPWMS_MASK);
+  
   TPM0_C1SC = TPM_CnSC_ELSB(1) | TPM_CnSC_MSB(1);
 }
 
@@ -166,41 +165,41 @@ void UART2_IRQHandler() {
 
 void packetProcessingThread(void *argument){
     for (;;){
-			osEventFlagsWait(newPacketFlag, 0x0001, osFlagsWaitAny, osWaitForever);
-			
-			int isMovement = uartData & 0x80;
-			
-			if (isMovement) {
-				int isLeft = uartData & 0x40;
-				int8_t value = ((int8_t) (uartData << 2)) / 4;
-				if (isLeft) {
-					osMutexAcquire(leftPwmValueMutex, osWaitForever);
-					leftMotorValue = ((int) value) + 1;
-					osEventFlagsSet(newPwmValueFlag, 0x0001);
-					osMutexRelease(leftPwmValueMutex);
-				}
-				else {
-					osMutexAcquire(rightPwmValueMutex, osWaitForever);
-					rightMotorValue = ((int) value) + 1;
-					osEventFlagsSet(newPwmValueFlag, 0x0002);
-					osMutexRelease(rightPwmValueMutex);
-				}
-			}
-			
-			else {
-				isMovingTune = uartData & 1;
-			}
+      osEventFlagsWait(newPacketFlag, 0x0001, osFlagsWaitAny, osWaitForever);
+      
+      int isMovement = uartData & 0x80;
+      
+      if (isMovement) {
+        int isLeft = uartData & 0x40;
+        int8_t value = ((int8_t) (uartData << 2)) / 4;
+        if (isLeft) {
+          osMutexAcquire(leftPwmValueMutex, osWaitForever);
+          leftMotorValue = ((int) value) + 1;
+          osEventFlagsSet(newPwmValueFlag, 0x0001);
+          osMutexRelease(leftPwmValueMutex);
+        }
+        else {
+          osMutexAcquire(rightPwmValueMutex, osWaitForever);
+          rightMotorValue = ((int) value) + 1;
+          osEventFlagsSet(newPwmValueFlag, 0x0002);
+          osMutexRelease(rightPwmValueMutex);
+        }
+      }
+      
+      else {
+        isMovingTune = uartData & 1;
+      }
     }
 }
 
 void rightPwmThread(void *argument){
     for (;;){
-				osEventFlagsWait(newPwmValueFlag, 0x0002, osFlagsWaitAny, osWaitForever);
-			
+        osEventFlagsWait(newPwmValueFlag, 0x0002, osFlagsWaitAny, osWaitForever);
+      
         osMutexAcquire(rightPwmValueMutex, osWaitForever);
         float rightDutyCycle = (float)rightMotorValue/(float)32; // duty cycle for right motors
-				osMutexRelease(rightPwmValueMutex);
-			
+        osMutexRelease(rightPwmValueMutex);
+      
         // Set the PWM for right motors (both motors receive the same value)
         setMotorRightPWM(0, -rightDutyCycle); // Set right motor Positive
         setMotorRightPWM(1, rightDutyCycle); // Set right motor Ground
@@ -209,12 +208,12 @@ void rightPwmThread(void *argument){
 
 void leftPwmThread(void *argument){
     for (;;){
-				osEventFlagsWait(newPwmValueFlag, 0x0001, osFlagsWaitAny, osWaitForever);
-			
+        osEventFlagsWait(newPwmValueFlag, 0x0001, osFlagsWaitAny, osWaitForever);
+      
         osMutexAcquire(leftPwmValueMutex, osWaitForever);
         float leftDutyCycle = (float)leftMotorValue/(float)32; // duty cycle for left motors
         osMutexRelease(leftPwmValueMutex);
-				
+        
         // Set the PWM for left motors (both motors receive the same value)
         setMotorLeftPWM(0, leftDutyCycle);  // Set left motor Positive
         setMotorLeftPWM(1, -leftDutyCycle);  // Set left motor Ground
@@ -238,6 +237,7 @@ void turnOffAllGreenLeds() {
         }
     }
 }
+
 
 void turnOnGreenLed(int index) {
     if (ledPorts[index] == PORTB_BASE) {
@@ -264,14 +264,14 @@ void greenLedWalk(void) {
 void ledControlThread(void *arg) {
     while (1) {
         int isMoving = leftMotorValue != 0 && rightMotorValue != 0;
-			
+      
         if (isMoving){
           setRedLed(1);
           greenLedWalk();
           setRedLed(0);
           greenLedWalk();
         }
-				else {
+        else {
           turnOnAllGreenLeds();
           setRedLed(1);
           osDelay(250);
@@ -282,45 +282,45 @@ void ledControlThread(void *arg) {
 }
 
 void playNote(uint16_t frequency, uint32_t duration) {
-				if (frequency == 0) {
-					TPM0_C1V = 0;
-				}
-				else{	
-					TPM0->MOD = (48000000 / (128 * frequency)) - 1;
-					TPM0_C1V = TPM0->MOD / 4 * 3;  // 75% duty cycle
-				}
+        if (frequency == 0) {
+          TPM0_C1V = 0;
+        }
+        else{  
+          TPM0->MOD = (48000000 / (128 * frequency)) - 1;
+          TPM0_C1V = TPM0->MOD / 2;  // 75% duty cycle
+        }
         osDelay(duration);
 }
 
 
 void buzzerControlThread(void *arg) {
-		uint16_t movingNotes[] = {
-				466, 0, 466, 0, 466, 494, 622
-		};
-		uint32_t movingRhythm[] = {
-				400, 400, 400, 400, 600, 600, 400
-		};
-		
-		uint16_t finishNotes[] = {
-				659, 587, 370, 415, 554, 494, 294,
-				330, 494, 440, 277, 330, 440
-		};
-		uint32_t finishRhythm[] = {
-				300, 300, 600, 600, 300, 300, 600, 600,
-				300, 300, 600, 600, 1200
-		};
-	
+    uint16_t movingNotes[] = {
+        932, 0, 932, 0, 932, 988, 1244
+    };
+    uint32_t movingRhythm[] = {
+        200, 200, 200, 200, 300, 300, 200
+    };
+    
+    uint16_t finishNotes[] = {
+        1318, 1174, 740, 830, 1108, 988, 588,
+        660, 988, 880, 554, 660, 880
+    };
+    uint32_t finishRhythm[] = {
+        150, 150, 300, 300, 150, 150, 300,
+        300, 150, 150, 300, 300, 600
+    };
+  
     for (;;) {
         if(isMovingTune) {
-					for (int i = 0; i < 7; i++) {
-						playNote(movingNotes[i], movingRhythm[i]);
-					}
-				}
-				else {
-					for (int i = 0; i < 13; i++) {
-						playNote(finishNotes[i], finishRhythm[i]);
-					}
-			  }
+          for (int i = 0; i < 7; i++) {
+            playNote(movingNotes[i] * 8, movingRhythm[i]);
+          }
+        }
+        else {
+          for (int i = 0; i < 13; i++) {
+            playNote(finishNotes[i] * 11, finishRhythm[i]);
+          }
+        }
     }
 }
 
@@ -330,26 +330,24 @@ int main(void) {
     initUart();
     SystemCoreClockUpdate();
     initPwm();
-		initGpio();
+    initGpio();
 
     osKernelInitialize();
 
     leftPwmValueMutex = osMutexNew(NULL);
-		rightPwmValueMutex = osMutexNew(NULL);
-	
-		newPacketFlag = osEventFlagsNew(NULL);
-		newPwmValueFlag = osEventFlagsNew(NULL);
+    rightPwmValueMutex = osMutexNew(NULL);
+  
+    newPacketFlag = osEventFlagsNew(NULL);
+    newPwmValueFlag = osEventFlagsNew(NULL);
 
     packetProcessingThreadId = osThreadNew(packetProcessingThread, NULL, NULL);
     rightPwmThreadId = osThreadNew(rightPwmThread, NULL, NULL);
-		leftPwmThreadId = osThreadNew(leftPwmThread, NULL, NULL);
-		ledControlThreadId = osThreadNew(ledControlThread, NULL, NULL);
-		buzzerControlThreadId = osThreadNew(buzzerControlThread, NULL, NULL);
+    leftPwmThreadId = osThreadNew(leftPwmThread, NULL, NULL);
+    ledControlThreadId = osThreadNew(ledControlThread, NULL, NULL);
+    buzzerControlThreadId = osThreadNew(buzzerControlThread, NULL, NULL);
 
     osKernelStart();
-		
+    
 
     for (;;){}
 }
-
-
